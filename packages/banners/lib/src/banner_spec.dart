@@ -15,8 +15,11 @@ enum BannerSeverity { info, success, warning, error }
 /// meant to live on route definitions (built once, at router construction), so
 /// this is a non-issue in practice. If you build specs on the fly, hoist the
 /// callback into a `static` or a field so equality keeps working.
+/// `final` so `==` cannot become asymmetric via a subclass: [RootBanner] leans
+/// on `listEquals` over these, and an argument-order-dependent comparison there
+/// would make updates land or not depending on which side was passed.
 @immutable
-class BannerSpec {
+final class BannerSpec {
   const BannerSpec({
     required this.message,
     this.severity = BannerSeverity.info,
@@ -38,7 +41,7 @@ class BannerSpec {
   ///
   /// Ties go to the deepest route in the matched chain, so a page's own banner
   /// sits above its section's. Also decides who survives
-  /// `RootBanner.maxVisible`.
+  /// `RootBannerStyle.maxVisible`.
   final int priority;
 
   @override

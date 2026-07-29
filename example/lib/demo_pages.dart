@@ -1,10 +1,9 @@
+import 'package:core_navigation/core_navigation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
-import 'package:go_router/go_router.dart';
 
 /// Outer shell chrome. The root banner renders *above* this AppBar, which is
 /// the whole point of hosting it outside the router's shells.
-class AppShell extends StatefulWidget {
+class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.child});
 
   final Widget child;
@@ -28,69 +27,35 @@ class AppShell extends StatefulWidget {
   }
 
   @override
-  State<AppShell> createState() => _AppShellState();
-}
-
-class _AppShellState extends State<AppShell> {
-  GoRouter? _router;
-  bool _canPop = false;
-  bool _sampleScheduled = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final router = GoRouter.of(context);
-    if (router == _router) return;
-    _router?.routerDelegate.removeListener(_scheduleSample);
-    _router = router;
-    router.routerDelegate.addListener(_scheduleSample);
-    _scheduleSample();
-  }
-
-  @override
-  void dispose() {
-    _router?.routerDelegate.removeListener(_scheduleSample);
-    super.dispose();
-  }
-
-  /// `canPop()` reads the live [NavigatorState] of the innermost shell, and this
-  /// widget is an *ancestor* of those navigators — they only take on the new
-  /// page list later in the same build pass. Sampling after the frame is what
-  /// makes the arrow agree with what is actually on the stack. This shell also
-  /// does not rebuild on an imperative `push` (its own GoRouterState is
-  /// unchanged), so the delegate listener is what wakes it up at all.
-  void _scheduleSample() {
-    if (_sampleScheduled) return;
-    _sampleScheduled = true;
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      _sampleScheduled = false;
-      if (!mounted) return;
-      final canPop = _router?.canPop() ?? false;
-      if (canPop != _canPop) setState(() => _canPop = canPop);
-    });
-    SchedulerBinding.instance.ensureVisualUpdate();
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      // The shell's own route is the only one on the root Navigator, so
-      // automaticallyImplyLeading never fires here even when an inner shell has
-      // something to pop. GoRouter.pop walks down into the shell navigators and
-      // pops the innermost poppable one, which is what this button needs; it
-      // throws if nothing can pop, hence gating on [_canPop].
-      automaticallyImplyLeading: false,
-      leading: _canPop ? BackButton(onPressed: () => context.pop()) : null,
-      title: const Text('Shell 1 — app chrome'),
-    ),
-    body: widget.child,
-    bottomNavigationBar: NavigationBar(
-      selectedIndex: AppShell._indexFor(GoRouterState.of(context).uri.path),
-      onDestinationSelected: (i) => context.go(AppShell._destinations[i].$2),
-      destinations: [
-        for (final (label, _, icon) in AppShell._destinations)
-          NavigationDestination(icon: Icon(icon), label: label),
-      ],
+  Widget build(BuildContext context) => AppCanPopBuilder(
+    // Sampling the pop state after the frame, subscribing to navigation, and
+    // holding the subscription so it can be undone all live behind this. They
+    // are navigation's problem, not this shell's.
+    builder: (context, canPop) => Scaffold(
+      appBar: AppBar(
+        // The shell's own route is the only one on the root Navigator, so
+        // automaticallyImplyLeading never fires here even when an inner shell has
+        // something to pop. AppNavigator.pop walks down into the shell navigators
+        // and pops the innermost poppable one, which is what this button needs;
+        // it throws if nothing can pop, hence gating on [canPop].
+        automaticallyImplyLeading: false,
+        leading: canPop
+            ? BackButton(onPressed: () => AppNavigator.of(context).pop())
+            : null,
+        title: const Text('Shell 1 — app chrome'),
+      ),
+      body: child,
+      bottomNavigationBar: NavigationBar(
+        // locationOf, not of(context).something: this is a read, and it has to
+        // register a dependency so the selected tab follows the location.
+        selectedIndex: _indexFor(AppNavigator.locationOf(context)),
+        onDestinationSelected: (i) =>
+            AppNavigator.of(context).go(_destinations[i].$2),
+        destinations: [
+          for (final (label, _, icon) in _destinations)
+            NavigationDestination(icon: Icon(icon), label: label),
+        ],
+      ),
     ),
   );
 }
@@ -140,12 +105,12 @@ class LabeledShell extends StatelessWidget {
   }
 }
 
-/// Chrome for a [StatefulShellRoute]: one Navigator per branch, so each tab
-/// keeps its own stack.
+/// Chrome for an [AppTabsRoute]: one Navigator per branch, so each tab keeps its
+/// own stack.
 class TabsShell extends StatelessWidget {
-  const TabsShell({super.key, required this.shell});
+  const TabsShell({super.key, required this.tabs});
 
-  final StatefulNavigationShell shell;
+  final AppTabs tabs;
 
   static const _labels = ['Inbox', 'Profile'];
 
@@ -170,14 +135,14 @@ class TabsShell extends StatelessWidget {
                   padding: const EdgeInsets.only(right: 6),
                   child: ChoiceChip(
                     label: Text(_labels[i]),
-                    selected: shell.currentIndex == i,
-                    onSelected: (_) => shell.goBranch(i),
+                    selected: tabs.currentIndex == i,
+                    onSelected: (_) => tabs.goToBranch(i),
                   ),
                 ),
             ],
           ),
         ),
-        Expanded(child: shell),
+        Expanded(child: tabs.view),
       ],
     );
   }
@@ -214,7 +179,7 @@ class DemoBody extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: FilledButton.tonal(
-                onPressed: () => context.push(path),
+                onPressed: () => AppNavigator.of(context).push(path),
                 child: Text(label),
               ),
             ),

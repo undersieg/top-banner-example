@@ -1,0 +1,11 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    # The app must not name a routing library. go_router is still *resolvable*
+    # here — it arrives transitively through core_navigation, and Dart puts the
+    # whole transitive closure in the package config — so an import of it would
+    # otherwise be a mere lint. Promoted, so `flutter analyze` fails on it.
+    # test/navigation_boundary_test.dart guards the pubspec, which is the other
+    # way to defeat this.
+    depend_on_referenced_packages: error

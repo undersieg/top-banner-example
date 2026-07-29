@@ -1,8 +1,13 @@
+import 'package:core_navigation/core_navigation.dart';
+// The go_router layer is an implementation detail of this package, so these tests
+// reach past the barrel on purpose: they are what pins the mapping from route
+// markers to a resolved stack. The app-facing surface is covered by
+// app_router_test.dart.
+import 'package:core_navigation/src/banner_route.dart';
+import 'package:core_navigation/src/go_router_banner_source.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
-import 'package:top_banner_example/banner/banner.dart';
-import 'package:top_banner_example/main.dart';
 
 const leafSpec = BannerSpec(message: 'leaf banner');
 const sectionSpec = BannerSpec(message: 'section banner');
@@ -124,6 +129,17 @@ List<RouteBase> _routes() => [
   ),
 ];
 
+/// Wires a hand-built [GoRouter] to the host the way [AppBannerScope] does, for
+/// tests that need the scope *above* the Router and so cannot look it up.
+Widget hostAbove(GoRouter router, Widget child) {
+  final source = GoRouterBannerSource(router);
+  addTearDown(source.dispose);
+  return BannerSourceScope(
+    source: source,
+    child: RootBanner(child: child),
+  );
+}
+
 Future<GoRouter> pumpApp(
   WidgetTester tester, {
   String initialLocation = '/',
@@ -138,8 +154,17 @@ Future<GoRouter> pumpApp(
   await tester.pumpWidget(
     MaterialApp.router(
       routerConfig: router,
-      builder: (context, child) =>
-          RootBanner(router: router, maxVisible: maxVisible, child: child!),
+      builder: (context, child) {
+        final source = GoRouterBannerSource(router);
+        addTearDown(source.dispose);
+        return BannerSourceScope(
+          source: source,
+          child: RootBanner(
+            style: RootBannerStyle(maxVisible: maxVisible),
+            child: child!,
+          ),
+        );
+      },
     ),
   );
   await tester.pumpAndSettle();
@@ -157,13 +182,13 @@ void main() {
         );
 
     test('no markers resolves to an empty stack', () {
-      expect(RootBanner.resolve(const <RouteBase>[]), isEmpty);
+      expect(BannerStack.ofMarkers(const <BannerMarker>[]), isEmpty);
     });
 
     test('markers along the chain stack, deepest first on a tie', () {
       final outer = BannerShellRoute(banner: sectionSpec, routes: _stub);
       // Chain order is outermost -> leaf.
-      expect(RootBanner.resolve([outer, leaf(banner: leafSpec)]), [
+      expect(BannerStack.ofMarkers([outer, leaf(banner: leafSpec)]), [
         leafSpec,
         sectionSpec,
       ]);
@@ -171,7 +196,7 @@ void main() {
 
     test('higher priority sits on top regardless of depth', () {
       final outer = BannerShellRoute(banner: outerSpec, routes: _stub);
-      expect(RootBanner.resolve([outer, leaf(banner: leafSpec)]), [
+      expect(BannerStack.ofMarkers([outer, leaf(banner: leafSpec)]), [
         outerSpec,
         leafSpec,
       ]);
@@ -179,7 +204,7 @@ void main() {
 
     test('one route can declare several banners', () {
       expect(
-        RootBanner.resolve([
+        BannerStack.ofMarkers([
           leaf(banners: [leafSpec, sectionSpec]),
         ]),
         [leafSpec, sectionSpec],
@@ -190,7 +215,7 @@ void main() {
       const a = BannerSpec(message: 'a');
       const b = BannerSpec(message: 'b');
       expect(
-        RootBanner.resolve([
+        BannerStack.ofMarkers([
           leaf(banners: [b, a]),
         ]),
         [b, a],
@@ -199,7 +224,7 @@ void main() {
 
     test('banner is prepended to banners when both are given', () {
       expect(
-        RootBanner.resolve([
+        BannerStack.ofMarkers([
           leaf(banner: outerSpec, banners: [leafSpec]),
         ]),
         [outerSpec, leafSpec],
@@ -208,14 +233,19 @@ void main() {
 
     test('a marker declaring nothing contributes nothing', () {
       final outer = BannerShellRoute(banner: sectionSpec, routes: _stub);
-      expect(RootBanner.resolve([outer, leaf()]), [sectionSpec]);
+      expect(BannerStack.ofMarkers([outer, leaf()]), [sectionSpec]);
     });
 
-    test('maxVisible keeps the highest priority banners', () {
-      final outer = BannerShellRoute(banner: outerSpec, routes: _stub);
+    test('order() works on raw groups, with no routing types involved', () {
+      const first = BannerSpec(message: 'first');
+      const second = BannerSpec(message: 'second', priority: 5);
+      // Outermost group first; `second` outranks on priority, `first` is deeper.
       expect(
-        RootBanner.resolve([outer, leaf(banner: leafSpec)], maxVisible: 1),
-        [outerSpec],
+        BannerStack.order([
+          [second],
+          [first],
+        ]),
+        [second, first],
       );
     });
   });
@@ -597,8 +627,7 @@ void main() {
         await tester.pumpWidget(
           MaterialApp.router(
             routerConfig: router,
-            builder: (context, child) =>
-                RootBanner(router: router, child: child!),
+            builder: (context, child) => hostAbove(router, child!),
           ),
         );
         await tester.pumpAndSettle();
@@ -628,161 +657,175 @@ void main() {
     });
   });
 
-  group('back navigation', () {
-    testWidgets('no back arrow when there is nothing to pop', (tester) async {
-      await tester.pumpWidget(const App());
+  group('router lookup', () {
+    /// Hosts RootBanner inside the outermost shell, with nothing passed to it.
+    Future<GoRouter> pumpSelfWired(
+      WidgetTester tester, {
+      String initialLocation = '/',
+    }) async {
+      final router = GoRouter(
+        initialLocation: initialLocation,
+        routes: [
+          ShellRoute(
+            builder: (context, state, child) =>
+                AppBannerScope(child: RootBanner(child: child)),
+            routes: [
+              GoRoute(path: '/', builder: (c, s) => _body('home')),
+              BannerShellRoute(
+                banner: sectionSpec,
+                builder: (context, state, child) => child,
+                routes: [
+                  BannerRoute(
+                    path: '/deep',
+                    banner: winningLeafSpec,
+                    builder: (c, s) => _body('deep'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
       await tester.pumpAndSettle();
-      expect(find.byType(BackButton), findsNothing);
+      return router;
+    }
 
-      // Nav bar destinations use `go`, which replaces rather than pushes.
-      await tester.tap(find.byIcon(Icons.science_outlined));
+    testWidgets('no router argument needed below the Router', (tester) async {
+      final router = await pumpSelfWired(tester);
+      expect(find.byType(BannerView), findsNothing);
+
+      router.go('/deep');
       await tester.pumpAndSettle();
-      expect(find.text('Beta home'), findsOne);
-      expect(find.byType(BackButton), findsNothing);
+      expect(find.byType(BannerView), findsExactly(2));
+      expect(
+        tester.getTopLeft(find.text(winningLeafSpec.message)).dy,
+        lessThan(tester.getTopLeft(find.text(sectionSpec.message)).dy),
+      );
     });
 
-    testWidgets('back arrow appears after a push and returns', (tester) async {
-      await tester.pumpWidget(const App());
-      await tester.pumpAndSettle();
+    testWidgets('a deep link resolves on the first frame, without animating', (
+      tester,
+    ) async {
+      // Mounted below the Router the configuration is already parsed, so this
+      // is picked up in didChangeDependencies rather than a frame later.
+      await pumpSelfWired(tester, initialLocation: '/deep');
+      expect(find.byType(BannerView), findsExactly(2));
+      expect(tester.binding.hasScheduledFrame, isFalse);
+    });
 
-      await tester.tap(find.text('Push the promo page'));
-      await tester.pumpAndSettle();
-      expect(find.text('Promo'), findsOne);
-      expect(find.byType(BackButton), findsOne);
-      expect(find.byType(BannerView), findsOne);
+    testWidgets('the scope explains itself when there is no router above', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: AppBannerScope(child: RootBanner(child: SizedBox())),
+        ),
+      );
+      final error = tester.takeException();
+      expect(error, isFlutterError);
+      expect(error.toString(), contains('found no router above it'));
+      expect(error.toString(), contains('pass router: explicitly'));
+    });
 
-      await tester.tap(find.byType(BackButton));
+    testWidgets('a bare RootBanner asks for a source, not a router', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const MaterialApp(home: RootBanner(child: SizedBox())),
+      );
+      final error = tester.takeException();
+      expect(error, isFlutterError);
+      expect(error.toString(), contains('No BannerSourceScope found'));
+      // The routing-agnostic half must not name go_router in its diagnostics.
+      expect(error.toString(), contains('AppBannerScope'));
+    });
+
+    testWidgets('RootBanner accepts a plain ValueListenable as its source', (
+      tester,
+    ) async {
+      // Proves the seam is routing-free: no router anywhere in this test.
+      final source = ValueNotifier<List<BannerSpec>>(const []);
+      addTearDown(source.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RootBanner(source: source, child: const SizedBox()),
+        ),
+      );
+      expect(find.byType(BannerView), findsNothing);
+
+      source.value = [outerSpec, leafSpec];
       await tester.pumpAndSettle();
-      // 'Home' also labels a nav destination, so match the page's own text.
-      expect(find.text('No marker on this route, so no banner.'), findsOne);
-      expect(find.byType(BackButton), findsNothing);
+      expect(find.byType(BannerView), findsExactly(2));
+      expect(
+        tester.getTopLeft(find.text(outerSpec.message)).dy,
+        lessThan(tester.getTopLeft(find.text(leafSpec.message)).dy),
+      );
+
+      source.value = const [];
+      await tester.pumpAndSettle();
       expect(find.byType(BannerView), findsNothing);
     });
 
-    testWidgets('back arrow walks out of four nested shells', (tester) async {
-      await tester.pumpWidget(const App());
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byIcon(Icons.science_outlined));
-      await tester.pumpAndSettle();
-      expect(find.byType(BannerView), findsOne);
-
-      // Descend: shell 3 (unmarked), shell 4, then the leaf.
-      await tester.tap(find.text('Push into shell 3'));
-      await tester.pumpAndSettle();
-      expect(find.byType(BackButton), findsOne);
-      expect(find.byType(BannerView), findsOne);
-
-      await tester.tap(find.text('Push into shell 4'));
-      await tester.pumpAndSettle();
-      expect(find.byType(BannerView), findsExactly(2));
-
-      await tester.tap(find.text('Push the danger page'));
-      await tester.pumpAndSettle();
-      expect(find.byType(BannerView), findsExactly(3));
-
-      // Walk back out. Each pop is on a different inner Navigator, and one
-      // button in shell 1 has to reach all of them.
-      await tester.tap(find.byType(BackButton));
-      await tester.pumpAndSettle();
-      expect(find.text('Sandbox'), findsOne);
-      expect(find.byType(BannerView), findsExactly(2));
-
-      await tester.tap(find.byType(BackButton));
-      await tester.pumpAndSettle();
-      expect(find.text('Tools'), findsOne);
-      expect(find.byType(BannerView), findsOne);
-
-      await tester.tap(find.byType(BackButton));
-      await tester.pumpAndSettle();
-      expect(find.text('Beta home'), findsOne);
-      expect(find.byType(BannerView), findsOne);
-      // Back at a `go` destination, so the arrow is gone again.
-      expect(find.byType(BackButton), findsNothing);
-    });
-
-    testWidgets('back arrow pops within a stateful shell branch', (
+    testWidgets('the scope exposes a live source, not a snapshot', (
       tester,
     ) async {
-      await tester.pumpWidget(const App());
-      await tester.pumpAndSettle();
+      final router = await pumpSelfWired(tester, initialLocation: '/deep');
+      final source = BannerSourceScope.of(tester.element(find.text('deep')));
+      expect(source.value, [winningLeafSpec, sectionSpec]);
 
-      await tester.tap(find.byIcon(Icons.tab_outlined));
+      // A snapshot getter would still read the old stack here; a live
+      // ValueListenable tracks the navigation.
+      router.go('/');
       await tester.pumpAndSettle();
-      expect(find.text('Inbox tab'), findsOne);
-      expect(find.byType(BackButton), findsNothing);
-
-      tester.element(find.text('Inbox tab')).push('/promo');
-      await tester.pumpAndSettle();
-      expect(find.byType(BackButton), findsOne);
-
-      await tester.tap(find.byType(BackButton));
-      await tester.pumpAndSettle();
-      expect(find.text('Inbox tab'), findsOne);
-      expect(find.byType(BackButton), findsNothing);
+      expect(source.value, isEmpty);
     });
-  });
 
-  group('example app', () {
-    testWidgets('main.dart wiring resolves markers at every depth', (
-      tester,
-    ) async {
-      await tester.pumpWidget(const App());
-      await tester.pumpAndSettle();
-
-      // Shell 1's AppBar title is present on every route, so it is a stable
-      // navigation context for the whole walk.
-      Future<void> go(String location) async {
-        tester.element(find.text('Shell 1 — app chrome')).go(location);
-        await tester.pumpAndSettle();
+    testWidgets('a custom policy replaces the ordering', (tester) async {
+      // Proves the ordering is substitutable and that a policy receives the
+      // grouped chain, not a pre-flattened list.
+      final groupCounts = <int>[];
+      List<BannerSpec> outermostFirst(Iterable<List<BannerSpec>> groups) {
+        groupCounts.add(groups.length);
+        return groups.expand((group) => group).toList();
       }
 
-      double topOf(BannerSpec spec) =>
-          tester.getTopLeft(find.text(spec.message)).dy;
+      final router = GoRouter(
+        initialLocation: '/deep',
+        routes: [
+          ShellRoute(
+            builder: (context, state, child) => AppBannerScope(
+              policy: outermostFirst,
+              child: RootBanner(child: child),
+            ),
+            routes: [
+              BannerShellRoute(
+                banner: sectionSpec,
+                builder: (context, state, child) => child,
+                routes: [
+                  BannerRoute(
+                    path: '/deep',
+                    banner: winningLeafSpec,
+                    builder: (c, s) => _body('deep'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpAndSettle();
 
-      expect(find.byType(BannerView), findsNothing);
-
-      await go('/promo');
-      expect(find.byType(BannerView), findsOne);
-
-      // Two banners from one route, ordered by priority not list order.
-      await go('/double');
-      expect(find.byType(BannerView), findsExactly(2));
-      expect(topOf(Banners.offline), lessThan(topOf(Banners.promo)));
-
-      // Shell 2's marker alone.
-      await go('/beta');
-      expect(find.byType(BannerView), findsOne);
-      expect(find.text(Banners.betaSection.message), findsOne);
-
-      // Leaf stacked above shell 2.
-      await go('/beta/call');
-      expect(find.byType(BannerView), findsExactly(2));
-      expect(topOf(Banners.call), lessThan(topOf(Banners.betaSection)));
-
-      // Shell 3 declares nothing, so descending into it changes nothing.
-      await go('/beta/tools');
-      expect(find.byType(BannerView), findsOne);
-      expect(find.text(Banners.betaSection.message), findsOne);
-
-      // Shell 4 adds one, four levels deep.
-      await go('/beta/tools/sandbox');
-      expect(find.byType(BannerView), findsExactly(2));
-      expect(topOf(Banners.sandbox), lessThan(topOf(Banners.betaSection)));
-
-      // Leaf + shell 4 + shell 2.
-      await go('/beta/tools/sandbox/danger');
-      expect(find.byType(BannerView), findsExactly(3));
-      expect(topOf(Banners.danger), lessThan(topOf(Banners.sandbox)));
-      expect(topOf(Banners.sandbox), lessThan(topOf(Banners.betaSection)));
-
-      // StatefulShellRoute: marker on the marked branch's root route only.
-      await go('/tabs/inbox');
-      expect(find.byType(BannerView), findsOne);
-      expect(find.text(Banners.inbox.message), findsOne);
-
-      await go('/tabs/profile');
-      expect(find.byType(BannerView), findsNothing);
+      // Default order would be leaf-first (priority 10 beats 0).
+      expect(
+        tester.getTopLeft(find.text(sectionSpec.message)).dy,
+        lessThan(tester.getTopLeft(find.text(winningLeafSpec.message)).dy),
+      );
+      expect(groupCounts, everyElement(2));
     });
   });
 }

@@ -1,24 +1,18 @@
 import 'package:go_router/go_router.dart';
 
-import 'banner_spec.dart';
+import 'package:banners/banners.dart';
 
-/// The marker. Attach it to any [RouteBase] to declare root banners.
+/// go_router routes that carry a [BannerMarker].
 ///
-/// `RootBanner` walks the full matched route chain and collects every marker's
-/// banners, so it does not care whether a marker sits on a leaf route, on an
-/// outer shell, or on a shell nested three levels deep.
+/// [GoRouterBannerSource] walks the full matched route chain and collects every
+/// marker's banners, so it does not care whether a marker sits on a leaf route,
+/// on an outer shell, or on a shell nested three levels deep.
 ///
 /// [BannerRoute] and [BannerShellRoute] cover the common cases. For anything
-/// else — `StatefulShellRoute`, `StatefulShellBranch`, your own `GoRoute`
-/// subclass — implement this interface on it and it is picked up for free.
-abstract interface class BannerMarker {
-  /// Banners this route declares, in declaration order. Empty for none.
-  ///
-  /// Several markers along one chain stack, so a page can end up showing its
-  /// own banners plus its section's.
-  List<BannerSpec> get banners;
-}
-
+/// else — `StatefulShellRoute`, your own `GoRoute` subclass — implement
+/// [BannerMarker] on it and it is picked up for free. Note that
+/// `StatefulShellBranch` is *not* a `RouteBase`, so it never appears in the
+/// matched chain: put the marker on the branch's root route instead.
 List<BannerSpec> _merge(BannerSpec? banner, List<BannerSpec> banners) =>
     List.unmodifiable(banner == null ? banners : [banner, ...banners]);
 
@@ -52,7 +46,7 @@ class BannerRoute extends GoRoute implements BannerMarker {
 ///
 /// Use this for section-wide banners ("you are in the beta area"). Markers
 /// deeper in the chain stack on top rather than replacing it; see
-/// [BannerSpec.priority] for ordering and `RootBanner.maxVisible` to cap how
+/// [BannerSpec.priority] for ordering and [RootBannerStyle.maxVisible] to cap how
 /// many show at once.
 class BannerShellRoute extends ShellRoute implements BannerMarker {
   BannerShellRoute({
@@ -65,6 +59,11 @@ class BannerShellRoute extends ShellRoute implements BannerMarker {
     super.navigatorKey,
     super.parentNavigatorKey,
     super.restorationScopeId,
+    // Forwarded so a shell-level guard (auth sections, the common case) and
+    // observer routing stay available; omitting them made this class a strict
+    // downgrade from ShellRoute.
+    super.redirect,
+    super.notifyRootObserver,
   }) : banners = _merge(banner, banners);
 
   @override

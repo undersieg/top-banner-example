@@ -1,0 +1,8 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    # This package depends on Flutter alone, so reaching for anything else is
+    # already unresolvable. Promoted anyway, so the diagnostic names the actual
+    # mistake rather than only "URI doesn't exist".
+    depend_on_referenced_packages: error

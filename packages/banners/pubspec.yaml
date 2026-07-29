@@ -1,0 +1,27 @@
+name: banners
+description: >-
+  A banner strip above the whole app, declared on routes rather than published
+  from page state. Renders a priority-ordered stack, consumes the status bar
+  inset, and knows nothing about any routing library.
+version: 0.1.0
+publish_to: 'none'
+
+environment:
+  sdk: ^3.11.3
+
+# Flutter, and nothing else. A routing library belongs in an adapter package —
+# see packages/core_navigation. test/banner_boundary_test.dart guards this list.
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  # test/flutter_test_config.dart. Pinned to what flutter_test depends on.
+  leak_tracker_flutter_testing: 3.0.10
+
+flutter:
+  # BannerView draws Material icons.
+  uses-material-design: true

@@ -1,0 +1,23 @@
+name: core_navigation
+description: >-
+  go_router bindings for the banners package: banners declared on routes and
+  resolved from the matched route chain. The only package that needs go_router.
+version: 0.1.0
+publish_to: 'none'
+
+environment:
+  sdk: ^3.11.3
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  go_router: ^17.3.0
+  banners:
+    path: ../banners
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  leak_tracker_flutter_testing: 3.0.10

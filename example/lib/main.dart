@@ -1,7 +1,6 @@
+import 'package:core_navigation/core_navigation.dart';
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
-import 'banner/banner.dart';
 import 'demo_pages.dart';
 
 void main() => runApp(const App());
@@ -61,33 +60,40 @@ class Banners {
   );
 }
 
-final List<RouteBase> appRoutes = [
-  // Shell 1: app chrome. No marker.
-  ShellRoute(
-    builder: (context, state, child) => AppShell(child: child),
-    routes: [
-      GoRoute(
+/// The whole app's navigation, and not one routing-library type in sight.
+final List<AppRoute> appRoutes = [
+  // Shell 1: app chrome. No banner of its own.
+  AppShellRoute(
+    // The only wiring point, and the layering in two lines: the scope answers
+    // "which routes are matched" and the host renders it — one widget from each
+    // package. The scope finds the router from context, so nothing is handed to
+    // it.
+    builder: (context, child) => AppBannerScope(
+      child: RootBanner(child: AppShell(child: child)),
+    ),
+    children: [
+      AppPageRoute(
         path: '/',
-        builder: (context, state) => const DemoBody(
+        builder: (context) => const DemoBody(
           title: 'Home',
-          note: 'No marker on this route, so no banner.',
+          note: 'No banner declared on this route, so no banner.',
           links: [
             ('Push the promo page', '/promo'),
             ('Push the two-banner page', '/double'),
           ],
         ),
       ),
-      GoRoute(
+      AppPageRoute(
         path: '/plain',
-        builder: (context, state) =>
+        builder: (context) =>
             const DemoBody(title: 'Plain', note: 'Still no banner.'),
       ),
 
-      // Marker on a leaf route.
-      BannerRoute(
+      // A banner on a leaf route.
+      AppPageRoute(
         path: '/promo',
         banner: Banners.promo,
-        builder: (context, state) => const DemoBody(
+        builder: (context) => const DemoBody(
           title: 'Promo',
           note: '1 banner, declared by this route.',
         ),
@@ -95,28 +101,28 @@ final List<RouteBase> appRoutes = [
 
       // Two banners declared by one route. They stack highest priority first,
       // so `offline` (30) sits above `promo` (10) regardless of list order.
-      BannerRoute(
+      AppPageRoute(
         path: '/double',
         banners: [Banners.promo, Banners.offline],
-        builder: (context, state) => const DemoBody(
+        builder: (context) => const DemoBody(
           title: 'Two banners',
           note: '2 banners, both from this one route, ordered by priority.',
         ),
       ),
 
-      // Shell 2: marked, so it applies to everything nested below — including
-      // routes inside shells 3 and 4.
-      BannerShellRoute(
+      // Shell 2: carries a banner, so it applies to everything nested below —
+      // including routes inside shells 3 and 4.
+      AppShellRoute(
         banner: Banners.betaSection,
-        builder: (context, state, child) => LabeledShell(
-          label: 'Shell 2 — beta (marked)',
+        builder: (context, child) => LabeledShell(
+          label: 'Shell 2 — beta (banner)',
           depth: 2,
           child: child,
         ),
-        routes: [
-          GoRoute(
+        children: [
+          AppPageRoute(
             path: '/beta',
-            builder: (context, state) => const DemoBody(
+            builder: (context) => const DemoBody(
               title: 'Beta home',
               note: '1 banner, inherited from shell 2.',
               links: [
@@ -125,45 +131,45 @@ final List<RouteBase> appRoutes = [
               ],
             ),
           ),
-          BannerRoute(
+          AppPageRoute(
             path: '/beta/call',
             banner: Banners.call,
-            builder: (context, state) => const DemoBody(
+            builder: (context) => const DemoBody(
               title: 'Call',
               note: '2 banners: this route stacked above shell 2.',
             ),
           ),
 
-          // Shell 3: no marker. Proves an unmarked shell in the middle of the
+          // Shell 3: no banner. Proves an undeclared shell in the middle of the
           // chain is simply transparent.
-          ShellRoute(
-            builder: (context, state, child) => LabeledShell(
-              label: 'Shell 3 — tools (no marker)',
+          AppShellRoute(
+            builder: (context, child) => LabeledShell(
+              label: 'Shell 3 — tools (no banner)',
               depth: 3,
               child: child,
             ),
-            routes: [
-              GoRoute(
+            children: [
+              AppPageRoute(
                 path: '/beta/tools',
-                builder: (context, state) => const DemoBody(
+                builder: (context) => const DemoBody(
                   title: 'Tools',
                   note: 'Still 1 banner: shell 3 declares nothing.',
                   links: [('Push into shell 4', '/beta/tools/sandbox')],
                 ),
               ),
 
-              // Shell 4: marked again, four levels deep.
-              BannerShellRoute(
+              // Shell 4: declares one again, four levels deep.
+              AppShellRoute(
                 banner: Banners.sandbox,
-                builder: (context, state, child) => LabeledShell(
-                  label: 'Shell 4 — sandbox (marked)',
+                builder: (context, child) => LabeledShell(
+                  label: 'Shell 4 — sandbox (banner)',
                   depth: 4,
                   child: child,
                 ),
-                routes: [
-                  GoRoute(
+                children: [
+                  AppPageRoute(
                     path: '/beta/tools/sandbox',
-                    builder: (context, state) => const DemoBody(
+                    builder: (context) => const DemoBody(
                       title: 'Sandbox',
                       note: '2 banners, from shells 4 and 2.',
                       links: [
@@ -171,10 +177,10 @@ final List<RouteBase> appRoutes = [
                       ],
                     ),
                   ),
-                  BannerRoute(
+                  AppPageRoute(
                     path: '/beta/tools/sandbox/danger',
                     banner: Banners.danger,
-                    builder: (context, state) => const DemoBody(
+                    builder: (context) => const DemoBody(
                       title: 'Danger',
                       note: '3 banners: this route, shell 4, and shell 2.',
                     ),
@@ -186,31 +192,30 @@ final List<RouteBase> appRoutes = [
         ],
       ),
 
-      // A StatefulShellRoute is also just another link in the chain. Markers go
-      // on the branch's routes: StatefulShellBranch is not a RouteBase, so a
-      // marker there would never be seen.
-      StatefulShellRoute.indexedStack(
-        builder: (context, state, shell) => TabsShell(shell: shell),
+      // Tabs are also just another link in the chain. Banners go on a branch's
+      // first route — see AppTabsRoute on why the container carries none.
+      AppTabsRoute(
+        builder: (context, tabs) => TabsShell(tabs: tabs),
         branches: [
-          StatefulShellBranch(
+          AppTabBranch(
             routes: [
-              BannerRoute(
+              AppPageRoute(
                 path: '/tabs/inbox',
                 banner: Banners.inbox,
-                builder: (context, state) => const DemoBody(
+                builder: (context) => const DemoBody(
                   title: 'Inbox tab',
                   note: '1 banner, declared by this branch root.',
                 ),
               ),
             ],
           ),
-          StatefulShellBranch(
+          AppTabBranch(
             routes: [
-              GoRoute(
+              AppPageRoute(
                 path: '/tabs/profile',
-                builder: (context, state) => const DemoBody(
+                builder: (context) => const DemoBody(
                   title: 'Profile tab',
-                  note: 'No marker on this branch, so no banner.',
+                  note: 'Nothing declared on this branch, so no banner.',
                 ),
               ),
             ],
@@ -229,7 +234,7 @@ class App extends StatefulWidget {
 }
 
 class _AppState extends State<App> {
-  final GoRouter _router = GoRouter(routes: appRoutes);
+  final AppRouter _router = AppRouter(routes: appRoutes);
 
   @override
   void dispose() {
@@ -241,8 +246,6 @@ class _AppState extends State<App> {
   Widget build(BuildContext context) => MaterialApp.router(
     title: 'Root banner',
     theme: ThemeData(colorSchemeSeed: Colors.indigo),
-    routerConfig: _router,
-    // The one wiring point: above every shell, below Theme and MediaQuery.
-    builder: (context, child) => RootBanner(router: _router, child: child!),
+    routerConfig: _router.config,
   );
 }
